@@ -1,0 +1,59 @@
+options:
+  machineType: "E2_HIGHCPU_8"
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build"
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/medlab-repo/ws-service:$SHORT_SHA"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/medlab-repo/ws-service:latest"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push"
+    args:
+      - "push"
+      - "--all-tags"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/medlab-repo/ws-service"
+    waitFor: ["build"]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "medlab-analyzer-ws-service"
+      - "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/medlab-repo/ws-service:$SHORT_SHA"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--timeout=3600"
+      - "--set-env-vars=NODE_ENV=${_ENVIRONMENT},PROJECT_ID=$PROJECT_ID,LOG_LEVEL=${_LOG_LEVEL}"
+    waitFor: ["push"]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "health-check"
+    entrypoint: "sh"
+    args:
+      - "-c"
+      - |
+        URL=$(gcloud run services describe medlab-analyzer-ws-service --region=${_REGION} --format='value(status.url)')
+        curl -f $URL/health || exit 1
+        echo "ws-service is healthy"
+    waitFor: ["deploy"]
+
+substitutions:
+  _REGION: "us-central1"
+  _ENVIRONMENT: "dev"
+  _LOG_LEVEL: "info"
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/medlab-repo/ws-service:$SHORT_SHA"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/medlab-repo/ws-service:latest"
